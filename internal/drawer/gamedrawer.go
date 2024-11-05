@@ -3,6 +3,7 @@ package drawer
 import (
 	"bytes"
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/joakim-ribier/go-utils/pkg/genericsutil"
+	"github.com/joakim-ribier/go-utils/pkg/slicesutil"
+	"github.com/joakim-ribier/pong/internal/network"
 	"github.com/joakim-ribier/pong/pkg"
 )
 
@@ -19,13 +22,27 @@ type GameDrawer struct {
 
 	BallDrawer    BallDrawer
 	PlayersDrawer PlayersDrawer
+
+	shutdown func() bool
+	send     func(cmd string, data interface{})
+
+	keys []ebiten.Key
+
+	remoteData remoteData
 }
 
-func NewDrawerGame(game *pkg.Game) *GameDrawer {
+func NewDrawerGame(
+	game *pkg.Game,
+	send func(cmd string, data interface{}),
+	shutdown func() bool) *GameDrawer {
+
 	return &GameDrawer{
 		Game:          game,
+		shutdown:      shutdown,
+		send:          send,
 		BallDrawer:    *NewBallDrawer(*game),
-		PlayersDrawer: *NewPlayerDrawer(*game)}
+		PlayersDrawer: *NewPlayerDrawer(*game),
+		remoteData:    newRemoteData()}
 }
 
 func (g *GameDrawer) Draw(screen *ebiten.Image) {
@@ -58,8 +75,13 @@ func (g *GameDrawer) Draw(screen *ebiten.Image) {
 		ebitenutil.DebugPrint(screen, b.String())
 	}
 
+	// draw the remote info game zone
+	if !g.Game.IsLocal() {
+		g.drawRemoteGameZone(screen)
+	}
+
 	// draw the "how to play" and player's score
-	g.drawGameZoneTextZone(screen)
+	g.drawGameZoneText(screen)
 
 	// draw the paddles
 	if g.Game.CurrentState != pkg.WinGame {
@@ -116,136 +138,259 @@ func (g *GameDrawer) Draw(screen *ebiten.Image) {
 	}
 }
 
-func (g *GameDrawer) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	return g.Game.Screen.Width, g.Game.Screen.Height
-}
-
 func (g *GameDrawer) Update() error {
-	if g.Game.CurrentState == pkg.StartGame || g.Game.CurrentState == pkg.WinGame {
-		// draw the ping-pong on the start screen as a logo
+	g.keys = inpututil.AppendPressedKeys(g.keys[:0])
+
+	// handle the shutdown by the user CTRL+C
+	shutdown := len(slicesutil.FilterT[ebiten.Key](g.keys, func(k ebiten.Key) bool {
+		return k == ebiten.KeyControl || k == ebiten.KeyC
+	})) == 2
+	if shutdown {
+		if g.shutdown() {
+			return fmt.Errorf("shutdown app '%s' now", g.Game.Title.Text)
+		}
+	}
+
+	// draw the ping-pong table on the start screen as a logo
+	if g.Game.CurrentState == pkg.StartGame {
 		screen := g.Game.Screen
 		screen.YBottom = float32(g.Game.Screen.GameZoneYCenter()) - float32(g.Game.PlayerL.Paddle.Height/2) - 15
 		screen.YTop = float32(g.Game.Screen.GameZoneYCenter()) + float32(g.Game.PlayerL.Paddle.Height/2) + 15
 		screen.XLeft = float32(g.Game.Screen.GameZoneXCenter()) - 150
 		screen.XRight = float32(g.Game.Screen.GameZoneXCenter()) + 150
 
-		g.PlayersDrawer.Update(screen)
-
-		if g.Game.CurrentState == pkg.StartGame {
-			g.BallDrawer.Update(screen, true)
-		}
+		g.PlayersDrawer.UpdateLeft(screen)
+		g.PlayersDrawer.UpdateRight(screen)
+		g.BallDrawer.Update(screen, true)
 	}
 
 	if g.Game.CurrentState == pkg.PlayGame {
-		g.BallDrawer.Update(g.Game.Screen, false)
-	}
-
-	if g.Game.CurrentState == pkg.PlayGame || g.Game.CurrentState == pkg.ResumeGame {
-		if state := g.PlayersDrawer.UpdateLeft(g.Game.Screen); state == pkg.PlayerLLostBall {
-			g.playerWinSet(g.Game.PlayerR)
-		} else if state := g.PlayersDrawer.UpdateRight(g.Game.Screen); state == pkg.PlayerRLostBall {
-			g.playerWinSet(g.Game.PlayerL)
+		if !g.Game.IsRemoteClient() {
+			g.BallDrawer.Update(g.Game.Screen, false)
+			g.send("updateBallPosition", g.Game.Ball.Position)
 		}
 	}
 
-	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
+	if g.Game.CurrentState == pkg.PlayGame || g.Game.CurrentState == pkg.ResumeGame {
+		g.updatePlayer(g.BallDrawer.playerL)
+		g.updatePlayer(g.BallDrawer.playerR)
+	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeySpace) && !g.Game.IsRemoteClient() {
 		switch g.Game.CurrentState {
 		case pkg.PlayGame:
-			g.Game.CurrentState = pkg.PauseGame
+			g.UpdateCurrentState(pkg.PauseGame, true)
 		case pkg.StartGame:
-			g.Game.CurrentState = pkg.ResumeGame
-			g.Game.StartNewSet()
+			g.UpdateCurrentState(pkg.ResumeGame, true)
 		case pkg.WinGame:
-			g.Game.CurrentState = pkg.StartGame
-			g.Game.ResetGame()
+			g.UpdateCurrentState(pkg.StartGame, true)
 		default:
-			g.Game.CurrentState = pkg.PlayGame
+			g.UpdateCurrentState(pkg.PlayGame, true)
 		}
 	}
 
 	return nil
 }
 
-func (g *GameDrawer) playerWinSet(player *pkg.Player) {
-	g.Game.CurrentState = pkg.ResumeGame
-	g.Game.Mark(player)
-	g.Game.EndSet(*player)
-	if g.Game.Winner() != nil {
-		g.Game.CurrentState = pkg.WinGame
-	} else {
-		g.Game.StartNewSet()
+func (g *GameDrawer) updatePlayer(player pkg.Player) {
+	currentY := player.Paddle.Y
+	if state := g.PlayersDrawer.update(player, g.Game.Screen); state.PlayerLostBall() {
+		g.UpdateCurrentState(state, !g.Game.IsRemoteClient())
+	}
+	if currentY != player.Paddle.Y {
+		g.send("updatePaddleY", player.Paddle.Y)
 	}
 }
 
-// drawBackgroundZone draws the background
+func (g *GameDrawer) UpdateCurrentState(state pkg.State, is bool) {
+	g.Game.CurrentState = state
+	g.send("currentState", g.Game.CurrentState.String())
+	switch state {
+	case pkg.PlayerLLostBall:
+		if is {
+			g.playerWinSet(g.Game.PlayerR)
+		}
+	case pkg.PlayerRLostBall:
+		if is {
+			g.playerWinSet(g.Game.PlayerL)
+		}
+	case pkg.ResumeGame:
+		g.Game.StartNewSet()
+	case pkg.StartGame:
+		g.Game.ResetGame()
+	}
+}
+
+func (g *GameDrawer) playerWinSet(player *pkg.Player) {
+	g.Game.Mark(player)
+	g.Game.EndSet(*player)
+	if g.Game.Winner() != nil {
+		g.UpdateCurrentState(pkg.WinGame, true)
+	} else {
+		if !g.Game.IsRemoteClient() {
+			g.UpdateCurrentState(pkg.ResumeGame, true)
+		}
+	}
+}
+
+// drawBackgroundZone draws the background (logo + title)
 func (g *GameDrawer) drawBackgroundZone(screen *ebiten.Image) {
-	screen.Fill(g.Game.Screen.AvailableColors["#bg"])
 
 	titleSize := len(g.Game.Title.Text) * g.Game.Title.FontSize
 	titleX := float32(GetXCenterPos(g.Game.Screen.Width, g.Game.Title.Text, int(g.Game.Title.FontSize)))
 	titleXMargin := 20
 
-	// title
-	DrawText(screen, g.Game.Title.Text, g.Game.Title.Font, g.Game.Title.Color,
-		pkg.Position{
-			X: float32(g.Game.Screen.Width)/2 - float32(titleSize/2),
-			Y: g.Game.Screen.YBottom/2 - float32(g.Game.Title.FontSize)/2},
-	)
+	totalLogoSize := 110
+	yBottom := int(g.Game.Screen.YBottom) - (int(g.Game.Screen.YBottom) - totalLogoSize)
+	xLeft := int(g.Game.Screen.XLeft) - (int(g.Game.Screen.XLeft) - totalLogoSize)
 
-	DrawText(screen, g.Game.Subtitle.Text, g.Game.Subtitle.Font, g.Game.Subtitle.Color,
-		pkg.Position{
-			X: float32(GetXCenterPos(g.Game.Screen.Width, g.Game.Subtitle.Text, g.Game.Subtitle.FontSize)),
-			Y: g.Game.Screen.YBottom/2 + float32(g.Game.Title.FontSize)/2 + 10},
-	)
+	/*
+		|| ---------      --------
+		|| || ------ PONG --------
+		|| || || ---      --------
+		|| || ||
+		|| || ||
+	*/
+	drawAtariLogo := func() {
+		// left lines
+		DrawRectangle(screen,
+			int(titleX)-titleXMargin-10, 20,
+			pkg.Position{X: float32(xLeft/2) - 40, Y: float32(yBottom/2) - 40},
+			g.Game.Screen.AvailableColors["#atari1"])
 
-	DrawRectangle(screen,
-		int(titleX)-titleXMargin-10, 20,
-		pkg.Position{X: float32(g.Game.Screen.XLeft/2) - 40, Y: float32(g.Game.Screen.YBottom/2) - 40},
-		g.Game.Screen.AvailableColors["#atari1"])
+		DrawRectangle(screen,
+			int(titleX)-titleXMargin-40, 20,
+			pkg.Position{X: float32(xLeft/2) - 10, Y: float32(yBottom/2) - 10},
+			g.Game.Screen.AvailableColors["#atari2"])
 
-	DrawRectangle(screen,
-		g.Game.Screen.Width/2, 20,
-		pkg.Position{X: float32(g.Game.Screen.Width/2) + float32(titleSize/2) + 15, Y: float32(g.Game.Screen.YBottom/2) - 40},
-		g.Game.Screen.AvailableColors["#atari1"])
+		DrawRectangle(screen,
+			int(titleX)-titleXMargin-70, 20,
+			pkg.Position{X: float32(xLeft/2) + 20, Y: float32(yBottom/2) + 20},
+			g.Game.Screen.AvailableColors["#atari3"])
 
-	DrawRectangle(screen,
-		20, g.Game.Screen.Height,
-		pkg.Position{X: float32(g.Game.Screen.XLeft/2) - 40, Y: float32(g.Game.Screen.YBottom/2) - 20},
-		g.Game.Screen.AvailableColors["#atari1"])
+		// right lines
+		DrawRectangle(screen,
+			g.Game.Screen.Width/2, 20,
+			pkg.Position{X: float32(g.Game.Screen.Width/2) + float32(titleSize/2) + 15, Y: float32(yBottom/2) - 40},
+			g.Game.Screen.AvailableColors["#atari1"])
 
-	DrawRectangle(screen,
-		int(titleX)-titleXMargin-40, 20,
-		pkg.Position{X: float32(g.Game.Screen.XLeft/2) - 10, Y: float32(g.Game.Screen.YBottom/2) - 10},
-		g.Game.Screen.AvailableColors["#atari2"])
+		DrawRectangle(screen,
+			g.Game.Screen.Width/2, 20,
+			pkg.Position{X: float32(g.Game.Screen.Width/2) + float32(titleSize/2) + 15, Y: float32(yBottom/2) - 10},
+			g.Game.Screen.AvailableColors["#atari2"])
 
-	DrawRectangle(screen,
-		g.Game.Screen.Width/2, 20,
-		pkg.Position{X: float32(g.Game.Screen.Width/2) + float32(titleSize/2) + 15, Y: float32(g.Game.Screen.YBottom/2) - 10},
-		g.Game.Screen.AvailableColors["#atari2"])
+		DrawRectangle(screen,
+			g.Game.Screen.Width/2, 20,
+			pkg.Position{X: float32(g.Game.Screen.Width/2) + float32(titleSize/2) + 15, Y: float32(yBottom/2) + 20},
+			g.Game.Screen.AvailableColors["#atari3"])
 
-	DrawRectangle(screen,
-		20, g.Game.Screen.Height,
-		pkg.Position{X: float32(g.Game.Screen.XLeft/2) - 10, Y: float32(g.Game.Screen.YBottom / 2)},
-		g.Game.Screen.AvailableColors["#atari2"])
+		// vertical lines
+		DrawRectangle(screen,
+			20, g.Game.Screen.Height,
+			pkg.Position{X: float32(xLeft/2) - 40, Y: float32(yBottom/2) - 20},
+			g.Game.Screen.AvailableColors["#atari1"])
 
-	DrawRectangle(screen,
-		int(titleX)-titleXMargin-70, 20,
-		pkg.Position{X: float32(g.Game.Screen.XLeft/2) + 20, Y: float32(g.Game.Screen.YBottom/2) + 20},
-		g.Game.Screen.AvailableColors["#atari3"])
+		DrawRectangle(screen,
+			20, g.Game.Screen.Height,
+			pkg.Position{X: float32(xLeft/2) - 10, Y: float32(yBottom / 2)},
+			g.Game.Screen.AvailableColors["#atari2"])
 
-	DrawRectangle(screen,
-		g.Game.Screen.Width/2, 20,
-		pkg.Position{X: float32(g.Game.Screen.Width/2) + float32(titleSize/2) + 15, Y: float32(g.Game.Screen.YBottom/2) + 20},
-		g.Game.Screen.AvailableColors["#atari3"])
+		DrawRectangle(screen,
+			20, g.Game.Screen.Height,
+			pkg.Position{X: float32(xLeft/2) + 20, Y: float32(yBottom/2) + 20},
+			g.Game.Screen.AvailableColors["#atari3"])
+	}
 
-	DrawRectangle(screen,
-		20, g.Game.Screen.Height,
-		pkg.Position{X: float32(g.Game.Screen.XLeft/2) + 20, Y: float32(g.Game.Screen.YBottom/2) + 20},
-		g.Game.Screen.AvailableColors["#atari3"])
+	drawTitle := func() {
+		DrawText(screen, g.Game.Title.Text, g.Game.Title.Font, g.Game.Title.Color,
+			pkg.Position{
+				X: float32(GetXCenterPos(g.Game.Screen.Width, g.Game.Title.Text, g.Game.Title.FontSize)),
+				Y: float32(yBottom/2) - float32(g.Game.Title.FontSize)/2},
+		)
+
+		DrawText(screen, g.Game.Subtitle.Text, g.Game.Subtitle.Font, g.Game.Subtitle.Color,
+			pkg.Position{
+				X: float32(GetXCenterPos(g.Game.Screen.Width, g.Game.Subtitle.Text, g.Game.Subtitle.FontSize)),
+				Y: float32(yBottom/2) + float32(g.Game.Title.FontSize)/2 + 10},
+		)
+
+	}
+
+	screen.Fill(g.Game.Screen.AvailableColors["#bg"])
+	drawTitle()
+	drawAtariLogo()
 }
 
-// drawGameZoneTextZone draws the "how to play" and the players's score zone (name and score)
-func (g *GameDrawer) drawGameZoneTextZone(screen *ebiten.Image) {
+// drawGameZoneTextZone draws the remote text info
+func (g *GameDrawer) drawRemoteGameZone(screen *ebiten.Image) {
+	textColor := g.Game.Screen.AvailableColors["white"]
+	font := g.Game.Screen.Font.TinyText
+	marginY := 2
+
+	DrawRectangle(screen, g.Game.Screen.RemoteExtendZoneW-15, g.Game.Screen.GameZoneHeight()+30, pkg.Position{
+		X: float32(g.Game.Screen.XLeft - float32(g.Game.Screen.RemoteExtendZoneW)),
+		Y: g.Game.Screen.YBottom - 15}, color.Black)
+
+	y := g.Game.Screen.YBottom
+
+	text := "[REMOTE ADDR] / [PING]"
+	DrawText(screen, text, font, g.Game.Screen.AvailableColors["white"],
+		pkg.Position{
+			X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW/2)) - float32(len(text)*g.Game.Screen.Font.TinyTextSize)/2,
+			Y: y},
+	)
+	y += float32(g.Game.Screen.Font.TextSize) + float32(marginY)
+
+	for _, addr := range g.remoteData.clientsSorted() {
+		text = addr
+		DrawText(screen, text, font, g.Game.Screen.AvailableColors["white"],
+			pkg.Position{
+				X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW/2)) - float32(len(text)*g.Game.Screen.Font.TinyTextSize)/2,
+				Y: y},
+		)
+		y += float32(g.Game.Screen.Font.TextSize) + float32(marginY)
+
+		text = "..."
+		if !g.remoteData.clients[addr].lastPong.IsZero() {
+			text = fmt.Sprintf("%s - %d ms",
+				g.remoteData.clients[addr].lastPong.Format("15:04:05"),
+				g.remoteData.clients[addr].ping().Milliseconds())
+		}
+		DrawText(screen, text, font, g.Game.Screen.AvailableColors["white"],
+			pkg.Position{
+				X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW/2)) - float32(len(text)*g.Game.Screen.Font.TinyTextSize)/2,
+				Y: y},
+		)
+		y += float32(g.Game.Screen.Font.TextSize) + float32(marginY*3)
+	}
+
+	text = "[CHANNEL]"
+	DrawText(screen, text, font, g.Game.Screen.AvailableColors["white"],
+		pkg.Position{
+			X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW)) + 5,
+			Y: y},
+	)
+	y += float32(g.Game.Screen.Font.TextSize) + float32(marginY)
+
+	for _, msg := range g.remoteData.messages {
+		DrawText(screen, msg.dateTime, font, textColor,
+			pkg.Position{
+				X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW)) + 5,
+				Y: y},
+		)
+
+		msgColor := genericsutil.When[remoteMessageLevel, color.Color](msg.level, func(s remoteMessageLevel) bool { return s == warning }, g.Game.Screen.AvailableColors["red"], textColor)
+		DrawText(screen, msg.text, font, msgColor,
+			pkg.Position{
+				X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW)) + 80,
+				Y: y},
+		)
+		y += float32(g.Game.Screen.Font.TextSize) + float32(marginY)
+	}
+}
+
+// drawGameZoneText draws the "how to play" and the players's score zone (name and score)
+func (g *GameDrawer) drawGameZoneText(screen *ebiten.Image) {
 	marginCenterX := 45
 	marginTopY := float32(35)
 
@@ -421,5 +566,75 @@ func (g *GameDrawer) drawWinnerGameZone(screen *ebiten.Image) {
 			)
 		}
 
+	}
+}
+
+func (g *GameDrawer) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return g.Game.Screen.Width, g.Game.Screen.Height
+}
+
+func (g *GameDrawer) NotifyRemoteMessage(message network.Message) {
+
+	addMessageWithLevel := func(msg string, level remoteMessageLevel) {
+		maxSize := 40
+		if len(g.remoteData.messages) > maxSize {
+			g.remoteData.messages = g.remoteData.messages[len(g.remoteData.messages)-maxSize:]
+		}
+
+		g.remoteData.messages = append(
+			g.remoteData.messages,
+			remoteMessage{dateTime: fmt.Sprintf("[%s]", time.Now().Format("15:04:05")), text: msg, level: level},
+		)
+	}
+
+	if !g.Game.IsLocal() {
+		switch message.Data.Cmd {
+		case "connectionClosed":
+			if message.Data.Value.(string) == "failed" {
+				addMessageWithLevel("Connection failed...", warning)
+			} else {
+				if message.Data.Value.(string) != "normal" {
+					addMessageWithLevel("Lost connection...", warning)
+				}
+				addMessageWithLevel(fmt.Sprintf("%s disconnected", message.Id), info)
+			}
+		case "currentState":
+			switch pkg.ToState(message.Data.Value.(string)) {
+			case pkg.PlayerLLostBall:
+				addMessageWithLevel("Player R wins the point", info)
+			case pkg.PlayerRLostBall:
+				addMessageWithLevel("Player L wins the point", info)
+			case pkg.ResumeGame:
+				msg := "Start a new game"
+				if size := len(g.Game.Win.Sets); size > 0 {
+					msg = fmt.Sprintf("Start new set (%d)", size)
+				}
+				addMessageWithLevel(msg, info)
+			case pkg.WinGame:
+				addMessageWithLevel("End of the game", info)
+				if player := g.Game.Winner(); player != nil {
+					addMessageWithLevel(fmt.Sprintf("%s wins! (%d/%d)", player.Name, player.Score, g.Game.Looser().Score), info)
+				}
+			}
+		case "pingClients":
+			for _, client := range g.remoteData.clients {
+				client.lastPing = time.Now()
+			}
+		case "pingServer":
+			g.remoteData.clients[message.Id].lastPing = time.Now()
+		case "pong":
+			if _, ok := g.remoteData.clients[message.Id]; ok {
+				g.remoteData.clients[message.Id].lastPong = time.Now()
+			}
+		case "subscribe":
+			g.remoteData.clients[message.Id] = newRemoteClient()
+			g.remoteData.clients[message.Id].lastPing = time.Now()
+			if g.Game.IsRemoteServer() {
+				addMessageWithLevel("New subscriber...", info)
+				addMessageWithLevel(fmt.Sprintf("%s connected", message.Id), info)
+			}
+		case "unsubscribe":
+			delete(g.remoteData.clients, message.Id)
+		}
 	}
 }

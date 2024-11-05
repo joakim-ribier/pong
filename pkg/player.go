@@ -10,10 +10,11 @@ import (
 type Player struct {
 	*PlayerState
 
-	Name    string
-	Side    PlayerSide
-	Paddle  *Paddle
-	Options Options
+	Name          string
+	Side          PlayerSide
+	Paddle        *Paddle
+	Options       Options
+	UpdatePaddleY chan float32
 }
 
 // Player is a player with a paddle and options
@@ -31,17 +32,24 @@ type Options struct {
 
 func NewPlayer(name string, side PlayerSide, p *Paddle, options Options) *Player {
 	return &Player{
-		Name:        name,
-		Side:        side,
-		Paddle:      p,
-		Options:     options,
-		PlayerState: &PlayerState{0, false},
+		Name:          name,
+		Side:          side,
+		Paddle:        p,
+		Options:       options,
+		PlayerState:   &PlayerState{0, false},
+		UpdatePaddleY: make(chan float32, 256),
 	}
 }
 
 func (p *Player) Mark() {
 	p.Score++
 	p.Win = true
+}
+
+func (p *Player) Remote() {
+	for y := range p.UpdatePaddleY {
+		p.Paddle.Y = y
+	}
 }
 
 func (p *Player) Hit(ball Ball) bool {

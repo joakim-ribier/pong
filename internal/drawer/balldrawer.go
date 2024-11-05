@@ -25,6 +25,15 @@ func NewBallDrawer(game pkg.Game) *BallDrawer {
 	}
 }
 
+func (b *BallDrawer) UpdateBallPosition(data interface{}) {
+	position := data.(map[string]interface{})
+
+	b.ball.UpdateBall <- pkg.Position{
+		X: float32(position["x"].(float64)),
+		Y: float32(position["y"].(float64)),
+	}
+}
+
 func (b *BallDrawer) Draw(screen *ebiten.Image) {
 	DrawImage(screen, b.ball.Image, b.ball.Position)
 

@@ -5,20 +5,33 @@ import (
 	"log"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/joakim-ribier/pong/internal/game"
 	"github.com/joakim-ribier/pong/pkg"
-	"github.com/joakim-ribier/pong/pkg/drawer"
 )
 
 func main() {
-	debug := flag.Bool("debug", false, "help message for flag n")
+	debug := flag.Bool("debug", false, "define true to display more debug details...")
+	server := flag.String("server", "", "start the server and set its address")
+	client := flag.String("client", "", "start a new client and define the server address")
 	flag.Parse()
 
-	drawer := drawer.NewDrawerGame(pkg.NewGame(*debug))
+	var pongGame game.PongGame
 
-	ebiten.SetWindowSize(drawer.Game.Screen.Width, drawer.Game.Screen.Height)
-	ebiten.SetWindowTitle(drawer.Game.Title.Text)
+	if *server != "" {
+		pongGame = game.NewRemotePongGame(*debug, pkg.RemoteServerMode, *server)
+	} else if *client != "" {
+		pongGame = game.NewRemotePongGame(*debug, pkg.RemoteClientMode, *client)
+	} else {
+		pongGame = game.NewLocalPongGame(*debug)
+	}
 
-	if err := ebiten.RunGame(drawer); err != nil {
+	ebiten.SetWindowTitle(pongGame.Title())
+	ebiten.SetWindowSize(
+		pongGame.Drawer().Game.Screen.Width,
+		pongGame.Drawer().Game.Screen.Height,
+	)
+
+	if err := ebiten.RunGame(pongGame.Drawer()); err != nil {
 		log.Fatal(err)
 	}
 }
