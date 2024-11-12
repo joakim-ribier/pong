@@ -2,5 +2,6 @@ package pkg
 
 // Position is a set of coordinates in 2-D plan
 type Position struct {
-	X, Y float32
+	X float32 `json:"x"`
+	Y float32 `json:"y"`
 }

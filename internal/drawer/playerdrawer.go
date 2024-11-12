@@ -18,14 +18,19 @@ func NewPlayerDrawer(game pkg.Game) *PlayersDrawer {
 		PlayerRight: *game.PlayerR}
 }
 
+func (p *PlayersDrawer) UpdatePaddleY(y interface{}) {
+	// .(float64) => default setting of the encoding/json decoder when unmarshaling JSON numbers
+	if p.game.IsRemoteClient() {
+		p.PlayerLeft.UpdatePaddleY <- float32(y.(float64))
+	}
+	if p.game.IsRemoteServer() {
+		p.PlayerRight.UpdatePaddleY <- float32(y.(float64))
+	}
+}
+
 func (p *PlayersDrawer) Draw(screen *ebiten.Image) {
 	NewPaddleDrawer(p.PlayerLeft).Draw(screen)
 	NewPaddleDrawer(p.PlayerRight).Draw(screen)
-}
-
-func (p *PlayersDrawer) Update(screen pkg.Screen) {
-	p.update(p.PlayerLeft, screen)
-	p.update(p.PlayerRight, screen)
 }
 
 func (p *PlayersDrawer) UpdateLeft(screen pkg.Screen) pkg.State {
@@ -37,7 +42,10 @@ func (p *PlayersDrawer) UpdateRight(screen pkg.Screen) pkg.State {
 }
 
 func (p *PlayersDrawer) update(player pkg.Player, screen pkg.Screen) pkg.State {
-	NewPaddleDrawer(player).Update(screen)
+	NewPaddleDrawer(player).Update(screen,
+		p.game.GameMode == pkg.LocalMode ||
+			(player.Side == pkg.PlayerLeft && p.game.IsRemoteServer()) ||
+			(player.Side == pkg.PlayerRight && p.game.IsRemoteClient()))
 
 	if player.Side == pkg.PlayerLeft && p.game.Ball.X < player.Paddle.X {
 		return pkg.PlayerLLostBall

@@ -12,6 +12,8 @@ type Ball struct {
 	Height      int
 	Image       *ebiten.Image
 	Impressions []Impression
+
+	UpdateBall chan Position
 }
 
 type Impression struct {
@@ -28,5 +30,12 @@ func NewBall(w, h int, position Position) *Ball {
 		Height:      h,
 		Image:       GetImg("ball-white", w),
 		Impressions: nil,
+		UpdateBall:  make(chan Position, 256),
+	}
+}
+
+func (b *Ball) Remote() {
+	for position := range b.UpdateBall {
+		b.Position = position
 	}
 }

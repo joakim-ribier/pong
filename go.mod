@@ -1,10 +1,9 @@
 module github.com/joakim-ribier/pong
 
-go 1.22.5
-
-toolchain go1.22.8
+go 1.23.2
 
 require (
+	github.com/coder/websocket v1.8.12
 	github.com/hajimehoshi/ebiten/v2 v2.8.1
 	github.com/joakim-ribier/go-utils v0.0.0-20240926184801-f520d2a0d7a4
 	golang.org/x/text v0.18.0

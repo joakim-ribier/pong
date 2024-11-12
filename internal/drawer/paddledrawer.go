@@ -33,7 +33,7 @@ func (p *PaddleDrawer) Draw(screen *ebiten.Image) {
 	screen.DrawImage(p.paddle.Image, pOpts)
 }
 
-func (p *PaddleDrawer) Update(screen pkg.Screen) {
+func (p *PaddleDrawer) Update(screen pkg.Screen, updateY bool) {
 	borderMarginX := float32(25)
 	borderMarginY := float32(15)
 
@@ -43,6 +43,18 @@ func (p *PaddleDrawer) Update(screen pkg.Screen) {
 		p.paddle.X = screen.XRight - float32(p.paddle.Width) - borderMarginX
 	}
 
+	if updateY {
+		p.updateY()
+	}
+
+	if p.paddle.Y <= float32(screen.YBottom)+borderMarginY {
+		p.paddle.Y = screen.YBottom + borderMarginY
+	} else if p.paddle.Y+float32(p.paddle.Height) >= float32(screen.YTop)-borderMarginY {
+		p.paddle.Y = screen.YTop - float32(p.paddle.Height) - borderMarginY
+	}
+}
+
+func (p *PaddleDrawer) updateY() {
 	if inpututil.IsKeyJustPressed(p.options.Up) {
 		p.paddle.CurrentPressed = p.options.Up
 	} else if inpututil.IsKeyJustReleased(p.options.Up) {
@@ -61,11 +73,5 @@ func (p *PaddleDrawer) Update(screen pkg.Screen) {
 
 	if p.paddle.CurrentPressed == p.options.Down {
 		p.paddle.Y += p.paddle.Speed
-	}
-
-	if p.paddle.Y <= float32(screen.YBottom)+borderMarginY {
-		p.paddle.Y = screen.YBottom + borderMarginY
-	} else if p.paddle.Y+float32(p.paddle.Height) >= float32(screen.YTop)-borderMarginY {
-		p.paddle.Y = screen.YTop - float32(p.paddle.Height) - borderMarginY
 	}
 }

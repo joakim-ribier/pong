@@ -17,6 +17,8 @@ import (
 type Game struct {
 	*GameState
 
+	GameMode GameMode
+
 	Title    FontText
 	Subtitle FontText
 	Screen   Screen
@@ -91,10 +93,15 @@ type Reset struct {
 	Ball Ball
 }
 
-func NewGame(debug bool) *Game {
+func NewGame(mode GameMode, debug bool) *Game {
+	remoteExtendZoneW := 0
+	if mode != LocalMode {
+		remoteExtendZoneW = 350
+	}
+
 	screen := Screen{
-		Width: 1000, Height: 800,
-		XLeft: 100, XRight: 990, YBottom: 100, YTop: 790,
+		Width: 1100 + remoteExtendZoneW, Height: 800, RemoteExtendZoneW: remoteExtendZoneW,
+		XLeft: 110 + float32(remoteExtendZoneW), XRight: 1090 + float32(remoteExtendZoneW), YBottom: 110, YTop: 790,
 		AvailableColors: map[string]color.Color{
 			"#atari1":   color.RGBA{246, 125, 34, 255},
 			"#atari2":   color.RGBA{249, 162, 29, 255},
@@ -104,6 +111,7 @@ func NewGame(debug bool) *Game {
 			"#playerR":  color.White,
 			"#table-bg": color.RGBA{246, 125, 34, 255},
 			"#title":    color.RGBA{120, 226, 160, 255},
+			"red":       color.RGBA{255, 0, 0, 255},
 			"white":     color.White},
 		Font: NewFont()}
 
@@ -113,6 +121,7 @@ func NewGame(debug bool) *Game {
 	)
 
 	return &Game{
+		GameMode: mode,
 		Title: FontText{
 			Text: "PONG",
 			Font: screen.Font.H1, FontSize: screen.Font.H1Size,
@@ -120,7 +129,7 @@ func NewGame(debug bool) *Game {
 		},
 		Subtitle: FontText{
 			Text: "joakim-ribier/pong",
-			Font: screen.Font.SmallText, FontSize: screen.Font.SmallTextSize,
+			Font: screen.Font.TinyText, FontSize: screen.Font.TinyTextSize,
 			Color: screen.AvailableColors["white"],
 		},
 		Debug:  debug,
@@ -158,10 +167,10 @@ func NewGame(debug bool) *Game {
 }
 
 type Screen struct {
-	Width, Height                int
-	XLeft, XRight, YBottom, YTop float32
-	AvailableColors              map[string]color.Color
-	Font                         Font
+	Width, Height, RemoteExtendZoneW int
+	XLeft, XRight, YBottom, YTop     float32
+	AvailableColors                  map[string]color.Color
+	Font                             Font
 }
 
 func (s Screen) GameZoneWidth() int {
@@ -181,56 +190,76 @@ func (s Screen) GameZoneYCenter() int {
 }
 
 type Font struct {
-	H1, H2, Text, SmallText                 text.Face
-	H1Size, H2Size, TextSize, SmallTextSize int
+	H1, H2, Text, SmallText, TinyText                     text.Face
+	H1Size, H2Size, TextSize, SmallTextSize, TinyTextSize int
+	AvailableFonts                                        map[string]*text.GoTextFaceSource
 }
 
 func NewFont() Font {
+	tinyTextSize := 7
 	smallTextSize := 8
 	textSize := 12
 	h2Size := textSize * 2
 	h1Size := textSize * 3
 
-	faceSource, err := text.NewGoTextFaceSource(bytes.NewReader(fonts.PressStart2P_ttf))
+	regularFontFace, err := text.NewGoTextFaceSource(bytes.NewReader(fonts.PressStart2P_ttf))
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	availableFonts := map[string]*text.GoTextFaceSource{"#regular": regularFontFace}
+
 	h1Font := &text.GoTextFace{
-		Source:    faceSource,
+		Source:    availableFonts["#regular"],
 		Direction: text.DirectionLeftToRight,
 		Size:      float64(h1Size),
 		Language:  language.English,
 	}
 
 	h2Font := &text.GoTextFace{
-		Source:    faceSource,
+		Source:    availableFonts["#regular"],
 		Direction: text.DirectionLeftToRight,
 		Size:      float64(h2Size),
 		Language:  language.English,
 	}
 
 	textFont := &text.GoTextFace{
-		Source:    faceSource,
+		Source:    availableFonts["#regular"],
 		Direction: text.DirectionLeftToRight,
 		Size:      float64(textSize),
 		Language:  language.English,
 	}
-
 	smallTextFont := &text.GoTextFace{
-		Source:    faceSource,
+		Source:    availableFonts["#regular"],
 		Direction: text.DirectionLeftToRight,
 		Size:      float64(smallTextSize),
 		Language:  language.English,
 	}
+	tinyTextFont := &text.GoTextFace{
+		Source:    availableFonts["#regular"],
+		Direction: text.DirectionLeftToRight,
+		Size:      float64(tinyTextSize),
+		Language:  language.English,
+	}
 
 	return Font{
-		H1: h1Font, H2: h2Font, Text: textFont, SmallText: smallTextFont,
-		H1Size: h1Size, H2Size: h2Size, TextSize: textSize, SmallTextSize: smallTextSize,
+		H1: h1Font, H2: h2Font, Text: textFont, SmallText: smallTextFont, TinyText: tinyTextFont,
+		H1Size: h1Size, H2Size: h2Size, TextSize: textSize, SmallTextSize: smallTextSize, TinyTextSize: tinyTextSize,
+		AvailableFonts: availableFonts,
 	}
 }
 
 type State int
+
+const (
+	PauseGame State = iota
+	PlayerLLostBall
+	PlayerRLostBall
+	PlayGame
+	ResumeGame
+	StartGame
+	WinGame
+)
 
 func (s State) String() string {
 	switch s {
@@ -253,15 +282,42 @@ func (s State) String() string {
 	}
 }
 
-const (
-	PauseGame State = iota
-	PlayerLLostBall
-	PlayerRLostBall
-	PlayGame
-	ResumeGame
-	StartGame
-	WinGame
-)
+func ToState(s string) State {
+	switch s {
+	case "PauseGame":
+		return PauseGame
+	case "PlayerLLostBall":
+		return PlayerLLostBall
+	case "PlayerRLostBall":
+		return PlayerRLostBall
+	case "PlayGame":
+		return PlayGame
+	case "ResumeGame":
+		return ResumeGame
+	case "StartGame":
+		return StartGame
+	case "WinGame":
+		return WinGame
+	default:
+		return -1
+	}
+}
+
+func (s State) PlayerLostBall() bool {
+	return s == PlayerLLostBall || s == PlayerRLostBall
+}
+
+func (g Game) IsRemoteServer() bool {
+	return g.GameMode == RemoteServerMode
+}
+
+func (g Game) IsRemoteClient() bool {
+	return g.GameMode == RemoteClientMode
+}
+
+func (g Game) IsLocal() bool {
+	return !g.IsRemoteServer() && !g.IsRemoteClient()
+}
 
 // MaxXSpeedSet returns the max x speed of the sets
 func (g Game) MaxXSpeedSet() float32 {
@@ -305,6 +361,14 @@ func (g Game) Winner() *Player {
 	return nil
 }
 
+// Looser gets the looser of the game
+func (g Game) Looser() *Player {
+	if player := g.Winner(); player != nil {
+		return g.findTheOtherOne(*player)
+	}
+	return nil
+}
+
 // StartNewSet initializes a new set
 func (g *Game) StartNewSet() {
 	g.Ball.Position = g.GameState.Reset.Ball.Position
@@ -334,8 +398,15 @@ func (g *Game) EndSet(player Player) {
 
 // ResetGame initializes a new Game
 func (g *Game) ResetGame() {
-	g.StartNewSet()
 	g.PlayerL.Score = 0
 	g.PlayerR.Score = 0
 	g.Win.Sets = nil
 }
+
+type GameMode int
+
+const (
+	LocalMode GameMode = iota
+	RemoteClientMode
+	RemoteServerMode
+)
