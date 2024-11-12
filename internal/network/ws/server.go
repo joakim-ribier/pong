@@ -1,3 +1,9 @@
+// Package ws implements a WebSocket connection
+// to communicate between the server and client.
+//
+// Deprecated: The WebSocket is too slow, now we have to use udp package.
+//
+// This package is frozen and no new functionality will be added.
 package ws
 
 import (
@@ -19,19 +25,20 @@ type PServer struct {
 	closed     bool
 
 	hub    *network.Hub
-	ticker ticker
+	ticker network.Ticker
 
 	serveMux   http.ServeMux
 	httpServer *http.Server
 }
 
+// Deprecated
 func NewPServer(addr string) *PServer {
 	return &PServer{
 		remoteAddr: addr,
 		hub:        network.NewHub(),
-		ticker: ticker{
-			ticker: time.NewTicker(15 * time.Second),
-			done:   make(chan bool),
+		ticker: network.Ticker{
+			Ticker: time.NewTicker(15 * time.Second),
+			Done:   make(chan bool),
 		},
 	}
 }
@@ -98,10 +105,10 @@ func (s *PServer) ping(messages chan<- network.Message, oneshot bool) {
 
 	for {
 		select {
-		case <-s.ticker.done:
-			s.ticker.ticker.Stop()
+		case <-s.ticker.Done:
+			s.ticker.Ticker.Stop()
 			return
-		case <-s.ticker.ticker.C:
+		case <-s.ticker.Ticker.C:
 			ping()
 		}
 	}
@@ -127,15 +134,10 @@ func (s *PServer) Shutdown() {
 }
 
 func (s *PServer) Send(msg network.Message) {
-	s.hub.Broadcast <- msg.CopyId(s.remoteAddr)
-}
-
-func (s *PServer) SendTo(subscriberId string, msg network.Message) {
-	for subscriber := range s.hub.Subscribers {
-		if subscriber.RemoteAddr == subscriberId {
-			subscriber.Publish <- msg
-			break
-		}
+	if subscriber, ok := s.hub.Subscribers[msg.NetworkAddr]; ok {
+		subscriber.Publish <- msg
+	} else {
+		s.hub.Broadcast <- msg.WithAddr(s.remoteAddr)
 	}
 }
 
@@ -145,20 +147,20 @@ func (s *PServer) subscribe(w http.ResponseWriter, r *http.Request, messages cha
 	log.Printf("ws://%s subscribe", r.RemoteAddr)
 
 	subscriber := &network.Subscriber{
-		RemoteAddr: r.RemoteAddr,
-		Publish:    make(chan network.Message, 16),
-		Shutdown:   make(chan int, 1),
+		NetworkAddr: r.RemoteAddr,
+		Publish:     make(chan network.Message, 16),
+		Shutdown:    make(chan int, 1),
 	}
 	s.hub.Register <- subscriber
 
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		log.Printf("ws://%s failed to serve: %v", subscriber.RemoteAddr, err)
+		log.Printf("ws://%s failed to serve: %v", subscriber.NetworkAddr, err)
 		return
 	}
 
 	// send the message to refresh the UI
-	messages <- network.NewMessage("subscribe", nil).CopyId(subscriber.RemoteAddr)
+	messages <- network.NewMessage("subscribe", nil).WithAddr(subscriber.NetworkAddr)
 	s.ping(messages, true)
 
 	go s.publish(conn, subscriber, messages)
@@ -166,12 +168,12 @@ func (s *PServer) subscribe(w http.ResponseWriter, r *http.Request, messages cha
 }
 
 func (s *PServer) closeSubscriberConnection(conn *websocket.Conn, subscriber *network.Subscriber, messages chan<- network.Message) {
-	log.Printf("subscriber ws://%s connection closed", subscriber.RemoteAddr)
-	messages <- network.NewMessage("unsubscribe", nil).CopyId(subscriber.RemoteAddr)
+	log.Printf("subscriber ws://%s connection closed", subscriber.NetworkAddr)
+	messages <- network.NewMessage("unsubscribe", nil).WithAddr(subscriber.NetworkAddr)
 
 	err := conn.Close(websocket.StatusNormalClosure, "server exits the game")
 	if err != nil {
-		log.Printf("failed to close connection of ws://%s...%v", subscriber.RemoteAddr, err)
+		log.Printf("failed to close connection of ws://%s...%v", subscriber.NetworkAddr, err)
 	}
 }
 
@@ -188,9 +190,9 @@ func (s *PServer) publish(conn *websocket.Conn, subscriber *network.Subscriber, 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*500)
 			defer cancel()
 
-			err := wsjson.Write(ctx, conn, msg.CopyId(s.remoteAddr))
+			err := wsjson.Write(ctx, conn, msg.WithAddr(s.remoteAddr))
 			if err != nil {
-				log.Printf("ws://%s failed to send: %v", subscriber.RemoteAddr, err)
+				log.Printf("ws://%s failed to send: %v", subscriber.NetworkAddr, err)
 			}
 		}
 	}
@@ -204,17 +206,17 @@ func (s *PServer) read(conn *websocket.Conn, subscriber *network.Subscriber, mes
 		var message network.Message
 		err := wsjson.Read(ctx, conn, &message)
 		if err != nil {
-			s.hub.Unregister <- subscriber
+			s.hub.Unregister <- subscriber.NetworkAddr
 
 			if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
-				messages <- network.NewMessage("connectionClosed", "normal").CopyId(subscriber.RemoteAddr)
+				messages <- network.NewMessage("connectionClosed", "normal").WithAddr(subscriber.NetworkAddr)
 			} else {
-				log.Printf("ws://%s failed to read: %v", subscriber.RemoteAddr, err)
-				messages <- network.NewMessage("connectionClosed", "error").CopyId(subscriber.RemoteAddr)
+				log.Printf("ws://%s failed to read: %v", subscriber.NetworkAddr, err)
+				messages <- network.NewMessage("connectionClosed", "error").WithAddr(subscriber.NetworkAddr)
 			}
 			return
 		} else {
-			messages <- message.CopyId(subscriber.RemoteAddr)
+			messages <- message.WithAddr(subscriber.NetworkAddr)
 		}
 	}
 }

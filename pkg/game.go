@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/examples/resources/fonts"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/joakim-ribier/go-utils/pkg/genericsutil"
+	"github.com/joakim-ribier/go-utils/pkg/slicesutil"
 	"golang.org/x/text/language"
 )
 
@@ -46,6 +47,7 @@ type Set struct {
 	PlayerRScore  int
 	PlayerSideWin PlayerSide
 	XSpeed        float32
+	NbHit         int
 }
 
 func (s Set) HasWin(player Player) bool {
@@ -111,8 +113,8 @@ func NewGame(mode GameMode, debug bool) *Game {
 			"#playerR":  color.White,
 			"#table-bg": color.RGBA{246, 125, 34, 255},
 			"#title":    color.RGBA{120, 226, 160, 255},
-			"red":       color.RGBA{255, 0, 0, 255},
-			"white":     color.White},
+			"white":     color.White,
+			"black":     color.White},
 		Font: NewFont()}
 
 	ball := NewBall(16, 16, Position{
@@ -392,7 +394,38 @@ func (g *Game) EndSet(player Player) {
 		currentSet.PlayerSideWin = player.Side
 		currentSet.PlayerLScore = g.PlayerL.Score
 		currentSet.PlayerRScore = g.PlayerR.Score
-		currentSet.XSpeed = g.Ball.XSpeed
+	}
+}
+
+// EndSet updates parameters of the current set
+func (g *Game) LastEndedSet() *Set {
+	winSets := slicesutil.FilterT[*Set](g.Win.Sets, func(s *Set) bool { return !s.EndTime.IsZero() })
+	if len(winSets) == 0 {
+		return nil
+	}
+	return g.Win.Sets[len(winSets)-1]
+}
+
+// Hit computes the nb hits of the current set
+func (g *Game) Hit() {
+	if set := g.CurrentSet(); set != nil {
+		set.NbHit += 1
+	}
+}
+
+// SetXSpeed sets the X speed of the current set
+func (g *Game) SetXSpeed(xSpeed float32) {
+	if set := g.CurrentSet(); set != nil {
+		set.XSpeed = genericsutil.OrElse[float32](xSpeed, func() bool { return xSpeed > 0 }, xSpeed*-1)
+	}
+}
+
+// CurrentSet gets the current set
+func (g *Game) CurrentSet() *Set {
+	if len(g.Win.Sets) > 0 && g.Win.Sets[len(g.Win.Sets)-1].EndTime.IsZero() {
+		return g.Win.Sets[len(g.Win.Sets)-1]
+	} else {
+		return nil
 	}
 }
 

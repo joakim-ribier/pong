@@ -10,27 +10,20 @@ const IMPRESSIONS_MAX = 120
 const SPEED_RATIO = 1.05
 
 type BallDrawer struct {
-	ball    *pkg.Ball
-	playerL pkg.Player
-	playerR pkg.Player
-	debug   bool
+	ball     *pkg.Ball
+	playerL  pkg.Player
+	playerR  pkg.Player
+	debug    bool
+	isClient bool
 }
 
 func NewBallDrawer(game pkg.Game) *BallDrawer {
 	return &BallDrawer{
-		ball:    game.Ball,
-		playerL: *game.PlayerL,
-		playerR: *game.PlayerR,
-		debug:   game.Debug,
-	}
-}
-
-func (b *BallDrawer) UpdateBallPosition(data interface{}) {
-	position := data.(map[string]interface{})
-
-	b.ball.UpdateBall <- pkg.Position{
-		X: float32(position["x"].(float64)),
-		Y: float32(position["y"].(float64)),
+		ball:     game.Ball,
+		playerL:  *game.PlayerL,
+		playerR:  *game.PlayerR,
+		debug:    game.Debug,
+		isClient: game.IsRemoteClient(),
 	}
 }
 
@@ -43,7 +36,7 @@ func (b *BallDrawer) Draw(screen *ebiten.Image) {
 	}
 }
 
-func (b *BallDrawer) Update(screen pkg.Screen, demo bool) {
+func (b *BallDrawer) Update(game *pkg.Game, screen pkg.Screen, demo bool) {
 	borderMarginY := float32(15)
 
 	b.ball.X += b.ball.XSpeed
@@ -60,10 +53,14 @@ func (b *BallDrawer) Update(screen pkg.Screen, demo bool) {
 	if b.playerL.Hit(*b.ball) {
 		b.ball.XSpeed = -b.ball.XSpeed * genericsutil.OrElse[float32](SPEED_RATIO, func() bool { return !demo }, 1)
 		b.ball.X = b.playerL.Paddle.X + float32(b.playerL.Paddle.Width)
+		game.Hit()
 	} else if b.playerR.Hit(*b.ball) {
 		b.ball.XSpeed = -b.ball.XSpeed * genericsutil.OrElse[float32](SPEED_RATIO, func() bool { return !demo }, 1)
 		b.ball.X = b.playerR.Paddle.X - float32(b.playerR.Paddle.Width/2) - float32(b.ball.Width/2)
+		game.Hit()
 	}
+
+	game.SetXSpeed(b.ball.XSpeed)
 
 	if b.debug {
 		// stack the impressions for debug
