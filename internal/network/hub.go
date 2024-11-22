@@ -1,26 +1,30 @@
 package network
 
-import "log"
+import (
+	"log"
+	"sync"
+)
 
 type Subscriber struct {
-	RemoteAddr string
-	Publish    chan Message
-	Shutdown   chan int
+	NetworkAddr string
+	Publish     chan Message
+	Shutdown    chan int
 }
 
 type Hub struct {
-	Subscribers map[*Subscriber]bool
+	Subscribers map[string]*Subscriber
 	Broadcast   chan Message
 	Register    chan *Subscriber
-	Unregister  chan *Subscriber
+	Unregister  chan string
+	mu          sync.Mutex
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		Broadcast:   make(chan Message),
 		Register:    make(chan *Subscriber),
-		Unregister:  make(chan *Subscriber),
-		Subscribers: make(map[*Subscriber]bool),
+		Unregister:  make(chan string),
+		Subscribers: make(map[string]*Subscriber),
 	}
 }
 
@@ -34,21 +38,25 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case subscriber := <-h.Register:
-			log.Printf("hub: register new subscriber %s", subscriber.RemoteAddr)
-			h.Subscribers[subscriber] = true
-		case subscriber := <-h.Unregister:
-			if _, ok := h.Subscribers[subscriber]; ok {
-				log.Printf("hub: unregister subscriber %s", subscriber.RemoteAddr)
+			h.mu.Lock()
+			log.Printf("hub: register new subscriber [%s]", subscriber.NetworkAddr)
+			h.Subscribers[subscriber.NetworkAddr] = subscriber
+			h.mu.Unlock()
+		case networkAddr := <-h.Unregister:
+			h.mu.Lock()
+			if subscriber, ok := h.Subscribers[networkAddr]; ok {
+				log.Printf("hub: unregister subscriber [%s]", networkAddr)
 				subscriber.Shutdown <- 1
-				delete(h.Subscribers, subscriber)
+				delete(h.Subscribers, networkAddr)
 			}
+			h.mu.Unlock()
 		case message := <-h.Broadcast:
-			for subscriber := range h.Subscribers {
-				//log.Printf("hub: publish message to subscriber ws://%s", subscriber.remoteAddr)
+			for networkAddr, subscriber := range h.Subscribers {
+				log.Printf("hub: publish message to subscriber [%s]", networkAddr)
 				select {
 				case subscriber.Publish <- message:
 				default:
-					delete(h.Subscribers, subscriber)
+					delete(h.Subscribers, networkAddr)
 				}
 			}
 		}

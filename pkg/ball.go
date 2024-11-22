@@ -33,9 +33,3 @@ func NewBall(w, h int, position Position) *Ball {
 		UpdateBall:  make(chan Position, 256),
 	}
 }
-
-func (b *Ball) Remote() {
-	for position := range b.UpdateBall {
-		b.Position = position
-	}
-}

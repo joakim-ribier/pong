@@ -49,3 +49,8 @@ func DrawImage(screen *ebiten.Image, img *ebiten.Image, position pkg.Position) {
 	options.GeoM.Translate(float64(position.X), float64(position.Y))
 	screen.DrawImage(img, options)
 }
+
+// GetSize compute the size of the {text} field
+func GetSize(text string, fontSize int) int {
+	return len(text) * fontSize
+}

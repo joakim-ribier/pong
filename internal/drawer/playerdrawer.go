@@ -47,10 +47,16 @@ func (p *PlayersDrawer) update(player pkg.Player, screen pkg.Screen) pkg.State {
 			(player.Side == pkg.PlayerLeft && p.game.IsRemoteServer()) ||
 			(player.Side == pkg.PlayerRight && p.game.IsRemoteClient()))
 
-	if player.Side == pkg.PlayerLeft && p.game.Ball.X < player.Paddle.X {
-		return pkg.PlayerLLostBall
-	} else if player.Side == pkg.PlayerRight && p.game.Ball.X > player.Paddle.X {
-		return pkg.PlayerRLostBall
+	if p.game.IsRemoteServer() || p.game.IsLocal() {
+		if player.Side == pkg.PlayerLeft && p.game.Ball.X < player.Paddle.X {
+			return pkg.PlayerLLostBall
+		}
+	}
+
+	if p.game.IsRemoteClient() || p.game.IsLocal() {
+		if player.Side == pkg.PlayerRight && p.game.Ball.X > player.Paddle.X {
+			return pkg.PlayerRLostBall
+		}
 	}
 
 	return p.game.CurrentState

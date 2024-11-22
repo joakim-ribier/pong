@@ -1,40 +1,48 @@
 package game
 
 import (
+	"log"
+
 	"github.com/joakim-ribier/pong/internal/drawer"
 	"github.com/joakim-ribier/pong/internal/network"
-	"github.com/joakim-ribier/pong/internal/network/ws"
+	"github.com/joakim-ribier/pong/internal/network/udp"
 	"github.com/joakim-ribier/pong/pkg"
 )
 
 type RemotePongGame struct {
 	GameDrawer *drawer.GameDrawer
 
-	server   *ws.PServer
-	client   *ws.PClient
+	server   network.PServer
+	client   network.PClient
 	messages chan network.Message
+	version  string
 }
 
-func NewRemotePongGame(debug bool, mode pkg.GameMode, remoteAddr string) *RemotePongGame {
+func NewRemotePongGame(
+	debug bool,
+	mode pkg.GameMode,
+	remoteAddr, version string) *RemotePongGame {
+
 	pg := &RemotePongGame{
-		messages: make(chan network.Message)}
+		messages: make(chan network.Message),
+		version:  version,
+	}
 
 	go pg.handleMessage()
 
 	pg.GameDrawer = drawer.NewDrawerGame(
 		pkg.NewGame(mode, debug),
-		pg.Send,
-		pg.shutdown)
+		pg.Send, pg.shutdown,
+		version)
 
 	if pg.GameDrawer.Game.IsRemoteServer() {
-		pg.server = ws.NewPServer(remoteAddr)
+		pg.server = udp.NewServer(remoteAddr)
 		go pg.server.ListenAndServe(pg.messages)
 		go pg.GameDrawer.Game.PlayerR.Remote()
 	} else if pg.GameDrawer.Game.IsRemoteClient() {
-		pg.client = ws.NewPClient(remoteAddr)
-		go pg.client.Conn(pg.messages)
+		pg.client = udp.NewClient(remoteAddr)
+		go pg.client.ListenAndServe(pg.messages)
 		go pg.GameDrawer.Game.PlayerL.Remote()
-		go pg.GameDrawer.Game.Ball.Remote()
 	}
 
 	return pg
@@ -60,49 +68,17 @@ func (pg *RemotePongGame) Title() string {
 // handleMessage handles messages received from the web socket (server / client)
 func (pg *RemotePongGame) handleMessage() {
 	for message := range pg.messages {
-		//log.Printf("received message from %s: %v", message.Id, message)
-		pg.GameDrawer.NotifyRemoteMessage(message)
-		switch message.Data.Cmd {
-		case "connectionClosed":
-			pg.GameDrawer.UpdateCurrentState(pkg.StartGame, true)
-		case "currentState":
-			if pg.GameDrawer.Game.IsRemoteClient() {
-				pg.GameDrawer.UpdateCurrentState(pkg.ToState(message.Data.Value.(string)), true)
-			}
-		case "ping":
-			if pg.GameDrawer.Game.IsRemoteServer() {
-				pg.server.SendTo(message.Id, network.NewMessage("pong", nil))
-			}
-			if pg.GameDrawer.Game.IsRemoteClient() {
-				pg.client.Send(network.NewMessage("pong", nil))
-			}
-		case "updateBallPosition":
-			pg.GameDrawer.BallDrawer.UpdateBallPosition(message.Data.Value)
-		case "updatePaddleY":
-			pg.GameDrawer.PlayersDrawer.UpdatePaddleY(message.Data.Value)
-		}
+		log.Printf("handle message from %s: %v", message.NetworkAddr, message)
+		pg.GameDrawer.HandleNetworkMessage(message)
 	}
 }
 
-func (pg *RemotePongGame) Send(cmd string, data interface{}) {
-	switch cmd {
-	case "updateBallPosition":
-		if pg.GameDrawer.Game.IsRemoteServer() {
-			pg.server.Send(network.NewMessage(cmd, data))
-		}
-	case "updatePaddleY":
-		if pg.GameDrawer.Game.IsRemoteServer() {
-			pg.server.Send(network.NewMessage(cmd, data))
-		}
-		if pg.GameDrawer.Game.IsRemoteClient() {
-			pg.client.Send(network.NewMessage(cmd, data))
-		}
-	default:
-		if pg.GameDrawer.Game.IsRemoteServer() {
-			msg := network.NewMessage(cmd, data)
-			pg.GameDrawer.NotifyRemoteMessage(msg)
-			pg.server.Send(msg)
-		}
+func (pg *RemotePongGame) Send(msg network.Message) {
+	if pg.GameDrawer.Game.IsRemoteServer() {
+		pg.server.Send(msg)
+	}
+	if pg.GameDrawer.Game.IsRemoteClient() {
+		pg.client.Send(msg)
 	}
 }
 

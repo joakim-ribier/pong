@@ -1,3 +1,9 @@
+// Package ws implements a WebSocket connection
+// to communicate between the server and client.
+//
+// Deprecated: The WebSocket is too slow, now we have to use udp package.
+//
+// This package is frozen and no new functionality will be added.
 package ws
 
 import (
@@ -16,33 +22,29 @@ type PClient struct {
 
 	conn             *websocket.Conn
 	connectionClosed bool
-	ticker           ticker
+	ticker           network.Ticker
 }
 
-type ticker struct {
-	ticker *time.Ticker
-	done   chan bool
-}
-
+// Deprecated
 func NewPClient(addr string) *PClient {
 	return &PClient{
 		connectionClosed: false,
 		remoteAddr:       addr,
-		ticker: ticker{
-			ticker: time.NewTicker(5 * time.Second),
-			done:   make(chan bool),
+		ticker: network.Ticker{
+			Ticker: time.NewTicker(5 * time.Second),
+			Done:   make(chan bool),
 		},
 	}
 }
 
-func (c *PClient) Conn(messages chan<- network.Message) {
+func (c *PClient) ListenAndServe(messages chan<- network.Message) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	conn, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/subscribe", c.remoteAddr), nil)
 	if err != nil {
 		log.Printf("client failed to conn to ws://%s...: %v", c.remoteAddr, err)
-		messages <- network.NewMessage("connectionClosed", "failed").CopyId(c.remoteAddr)
+		messages <- network.NewMessage("connectionClosed", "failed").WithAddr(c.remoteAddr)
 		return
 	}
 	c.conn = conn
@@ -50,7 +52,7 @@ func (c *PClient) Conn(messages chan<- network.Message) {
 
 	defer c.closeSubscriberConnection()
 
-	messages <- network.NewMessage("subscribe", nil).CopyId(c.remoteAddr)
+	messages <- network.NewMessage("subscribe", nil).WithAddr(c.remoteAddr)
 
 	go c.ping(messages)
 	c.read(messages)
@@ -65,10 +67,10 @@ func (c *PClient) read(messages chan<- network.Message) {
 		err := wsjson.Read(ctx, c.conn, &message)
 		if err != nil {
 			if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
-				messages <- network.NewMessage("connectionClosed", "normal").CopyId(c.remoteAddr)
+				messages <- network.NewMessage("connectionClosed", "normal").WithAddr(c.remoteAddr)
 			} else {
 				log.Printf("client failed to read to ws://%s...: %v", c.remoteAddr, err)
-				messages <- network.NewMessage("connectionClosed", "error").CopyId(c.remoteAddr)
+				messages <- network.NewMessage("connectionClosed", "error").WithAddr(c.remoteAddr)
 			}
 			return
 		} else {
@@ -79,8 +81,8 @@ func (c *PClient) read(messages chan<- network.Message) {
 
 func (c *PClient) ping(messages chan<- network.Message) {
 	ping := func() {
-		c.Send(network.NewMessage("ping", nil).CopyId(c.remoteAddr))
-		messages <- network.NewMessage("pingServer", nil).CopyId(c.remoteAddr)
+		c.Send(network.NewMessage("ping", nil).WithAddr(c.remoteAddr))
+		messages <- network.NewMessage("pingServer", nil).WithAddr(c.remoteAddr)
 	}
 
 	// send the first ping before waiting the ticker (5 s)
@@ -88,10 +90,10 @@ func (c *PClient) ping(messages chan<- network.Message) {
 
 	for {
 		select {
-		case <-c.ticker.done:
-			c.ticker.ticker.Stop()
+		case <-c.ticker.Done:
+			c.ticker.Ticker.Stop()
 			return
-		case <-c.ticker.ticker.C:
+		case <-c.ticker.Ticker.C:
 			ping()
 		}
 	}
@@ -102,7 +104,7 @@ func (c *PClient) closeSubscriberConnection() {
 		log.Printf("ws://%s connection closed", c.remoteAddr)
 
 		c.connectionClosed = true
-		c.ticker.done <- true
+		c.ticker.Done <- true
 
 		err := c.conn.Close(websocket.StatusNormalClosure, "user exits the game")
 		if err != nil {
@@ -124,7 +126,7 @@ func (c *PClient) Send(msg network.Message) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
 		defer cancel()
 
-		err := wsjson.Write(ctx, c.conn, msg.CopyId(c.remoteAddr))
+		err := wsjson.Write(ctx, c.conn, msg.WithAddr(c.remoteAddr))
 		if err != nil {
 			log.Printf("ws://%s failed to send message: %v", c.remoteAddr, err)
 		}
