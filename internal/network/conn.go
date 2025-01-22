@@ -1,7 +1,7 @@
 package network
 
-type PServer interface {
+type Conn interface {
 	ListenAndServe(messages chan<- Message)
-	Shutdown()
 	Send(msg Message)
+	Shutdown()
 }

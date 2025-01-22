@@ -51,11 +51,11 @@ func (b *BallDrawer) Update(game *pkg.Game, screen pkg.Screen, demo bool) {
 	}
 
 	if b.playerL.Hit(*b.ball) {
-		b.ball.XSpeed = -b.ball.XSpeed * genericsutil.OrElse[float32](SPEED_RATIO, func() bool { return !demo }, 1)
+		b.ball.XSpeed = -b.ball.XSpeed * genericsutil.OrElse[float32](SPEED_RATIO, func(v float32) bool { return !demo }, func() float32 { return 1 })
 		b.ball.X = b.playerL.Paddle.X + float32(b.playerL.Paddle.Width)
 		game.Hit()
 	} else if b.playerR.Hit(*b.ball) {
-		b.ball.XSpeed = -b.ball.XSpeed * genericsutil.OrElse[float32](SPEED_RATIO, func() bool { return !demo }, 1)
+		b.ball.XSpeed = -b.ball.XSpeed * genericsutil.OrElse[float32](SPEED_RATIO, func(v float32) bool { return !demo }, func() float32 { return 1 })
 		b.ball.X = b.playerR.Paddle.X - float32(b.playerR.Paddle.Width/2) - float32(b.ball.Width/2)
 		game.Hit()
 	}

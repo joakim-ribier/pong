@@ -25,5 +25,6 @@ go.work.sum
 .env
 
 DS_Store
-cmd/client/client
-cmd/client/release.txt
+pong
+cmd/pong/pong
+!./cmd/

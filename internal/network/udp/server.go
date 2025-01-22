@@ -101,15 +101,17 @@ func (s *UDPServer) read(messages chan<- network.Message) {
 				Shutdown:    make(chan int, 1),
 			}
 			s.hub.Register <- subscriber
-			time.Sleep(500 * time.Millisecond)
-
-			s.ticker.Ping(s.Send, messages)
 			go s.listen(subscriber)
 		case network.Shutdown:
 			s.hub.Unregister <- remoteAddr.String()
 		}
 
 		messages <- message.WithAddr(remoteAddr.String())
+
+		// send immediatly the first [ping] after [subscribe] message
+		if message.AsCMD() == network.Subscribe {
+			s.ticker.Ping(s.Send, messages)
+		}
 	}
 }
 

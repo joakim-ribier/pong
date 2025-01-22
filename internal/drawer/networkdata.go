@@ -2,7 +2,6 @@ package drawer
 
 import (
 	"image/color"
-	"sort"
 	"time"
 )
 
@@ -67,21 +66,12 @@ type networkData struct {
 	readyToPlay readyToPlay
 }
 
-// newRemoteData builds a new {networkData} type
-func newRemoteData() *networkData {
+// newNetworkData builds a new {networkData} type
+func newNetworkData() *networkData {
 	return &networkData{
 		clients:     make(map[string]*networkClient),
 		readyToPlay: readyToPlay{ready: false, nbSeconds: 0, nbTpsLaps: 0, nbSecondsMax: 3},
 	}
-}
-
-func (t networkData) clientsSorted() []string {
-	keys := make([]string, 0, len(t.clients))
-	for k := range t.clients {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // ping computes the time elapsed between ping and pong in ms

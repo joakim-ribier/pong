@@ -12,6 +12,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/joakim-ribier/go-utils/pkg/genericsutil"
+	"github.com/joakim-ribier/go-utils/pkg/mapsutil"
 	"github.com/joakim-ribier/go-utils/pkg/slicesutil"
 	"github.com/joakim-ribier/pong/internal/network"
 	"github.com/joakim-ribier/pong/pkg"
@@ -23,7 +24,7 @@ type GameDrawer struct {
 	BallDrawer    BallDrawer
 	PlayersDrawer PlayersDrawer
 
-	shutdown func() bool
+	shutdown func()
 	send     func(msg network.Message)
 	version  string
 
@@ -35,7 +36,7 @@ type GameDrawer struct {
 func NewDrawerGame(
 	game *pkg.Game,
 	send func(msg network.Message),
-	shutdown func() bool,
+	shutdown func(),
 	version string) *GameDrawer {
 
 	return &GameDrawer{
@@ -45,7 +46,7 @@ func NewDrawerGame(
 		version:       version,
 		BallDrawer:    *NewBallDrawer(*game),
 		PlayersDrawer: *NewPlayerDrawer(*game),
-		remoteData:    newRemoteData()}
+		remoteData:    newNetworkData()}
 }
 
 func (g *GameDrawer) Draw(screen *ebiten.Image) {
@@ -167,9 +168,8 @@ func (g *GameDrawer) Update() error {
 		return k == ebiten.KeyControl || k == ebiten.KeyC
 	})) == 2
 	if shutdown {
-		if g.shutdown() {
-			return fmt.Errorf("shutdown app '%s' now", g.Game.Title.Text)
-		}
+		g.shutdown()
+		return fmt.Errorf("shutdown app '%s' now", g.Game.Title.Text)
 	}
 
 	// draw the ping-pong table on the start screen as a logo
@@ -486,7 +486,9 @@ func (g *GameDrawer) drawRemoteGameZone(screen *ebiten.Image) {
 
 	text := genericsutil.When[bool, string](
 		g.Game.IsRemoteServer(), func(b bool) bool { return b },
-		"[CLIENT ADDR] / [PING]", "[SERVER ADDR] / [PING]")
+		func(b bool) string { return "[CLIENT ADDR] / [PING]" },
+		func() string { return "[SERVER ADDR] / [PING]" })
+
 	DrawText(screen, text, font, textColor,
 		pkg.Position{
 			X: float32(g.Game.Screen.XLeft-float32(g.Game.Screen.RemoteExtendZoneW/2)) - float32(len(text)*fonSize)/2,
@@ -494,9 +496,7 @@ func (g *GameDrawer) drawRemoteGameZone(screen *ebiten.Image) {
 	)
 	y += float32(g.Game.Screen.Font.TextSize) + float32(marginY)
 
-	for _, addr := range g.remoteData.clientsSorted() {
-		client := g.remoteData.clients[addr]
-
+	for _, client := range mapsutil.Sort(g.remoteData.clients) {
 		text = client.networkAddr
 		DrawText(screen, text, font, textColor,
 			pkg.Position{

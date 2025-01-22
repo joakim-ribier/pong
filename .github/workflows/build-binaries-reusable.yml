@@ -1,0 +1,50 @@
+name: Build and publish binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  make_release:
+    name: Release Go Binary
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [windows]
+        goarch: ["386", amd64]
+    steps:
+    - name: Install gcc for ebitengine
+      run: |
+        sudo apt-get update
+        sudo apt install gcc
+
+    - name: Install dependencies for ebitengine
+      run: |
+        sudo apt-get update
+        sudo apt install libc6-dev libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libasound2-dev pkg-config
+
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+
+    - name: Update the latest app Version
+      if: ${{ inputs.version == 'latest' }}
+      run: echo latest#$(git log --format=%h -n1) > ./pkg/resources/generated-version.txt
+
+    - uses: wangyoucao577/go-release-action@v1.51
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        goos: ${{ matrix.goos }}
+        goarch: ${{ matrix.goarch }}
+        goversion: 1.23.4
+        project_path: "./cmd/pong"
+        binary_name: "pong"
+        extra_files: LICENSE README.md ./pkg/resources/generated-version.txt

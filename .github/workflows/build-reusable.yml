@@ -1,0 +1,35 @@
+name: Build (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  build_test_coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install gcc for ebitengine
+      run: |
+        sudo apt-get update
+        sudo apt install gcc
+
+    - name: Install dependencies for ebitengine
+      run: |
+        sudo apt-get update
+        sudo apt install libc6-dev libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libasound2-dev pkg-config
+
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.4'
+
+    - name: Build
+      run: go build -o . ./...
+
+    - name: Check vulnerabilities
+      uses: golang/govulncheck-action@v1
+      with:
+        go-version-input: 1.23.4
+        go-package: ./...

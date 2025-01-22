@@ -1,0 +1,17 @@
+name: Make a release
+
+on:
+  release:
+    types: [created, edited]
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  build_docker:
+    uses: ./.github/workflows/build-binaries-reusable.yml
+    with:
+      version: ${{ github.event.release.tag_name }}

@@ -1,0 +1,9 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  run:
+    uses: ./.github/workflows/build-reusable.yml

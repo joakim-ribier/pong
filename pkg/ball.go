@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/joakim-ribier/pong/pkg/resources"
 )
 
 type Ball struct {
@@ -28,7 +29,7 @@ func NewBall(w, h int, position Position) *Ball {
 		YSpeed:      5,
 		Width:       w,
 		Height:      h,
-		Image:       GetImg("ball-white", w),
+		Image:       GetImg(resources.BallWhitex16),
 		Impressions: nil,
 		UpdateBall:  make(chan Position, 256),
 	}

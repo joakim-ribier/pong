@@ -60,7 +60,8 @@ func (s Set) Duration() string {
 }
 
 func (s Set) Speed() float32 {
-	return genericsutil.OrElse(s.XSpeed, func() bool { return s.XSpeed > 0 }, s.XSpeed*-1)
+	return genericsutil.OrElse[float32](
+		s.XSpeed, func(v float32) bool { return v > 0 }, func() float32 { return s.XSpeed * -1 })
 }
 
 func (s Set) SpeedFormat() string {
@@ -336,7 +337,7 @@ func (g Game) MaxXSpeedSet() float32 {
 func (g Game) findTheOtherOne(player Player) *Player {
 	return genericsutil.When[Player, *Player](player, func(p Player) bool {
 		return p.Side == PlayerLeft
-	}, g.PlayerR, g.PlayerL)
+	}, func(p Player) *Player { return g.PlayerR }, func() *Player { return g.PlayerL })
 }
 
 // Mark increments the player's winner score and the another player to {win=false}
@@ -357,7 +358,7 @@ func (g Game) Winner() *Player {
 
 	if g.PlayerL.Score+g.PlayerR.Score == g.Win.Score {
 		return genericsutil.OrElse[*Player](g.PlayerL,
-			func() bool { return g.PlayerL.Score > g.PlayerR.Score }, g.PlayerR)
+			func(p *Player) bool { return p.Score > g.PlayerR.Score }, func() *Player { return g.PlayerR })
 	}
 
 	return nil
@@ -416,7 +417,7 @@ func (g *Game) Hit() {
 // SetXSpeed sets the X speed of the current set
 func (g *Game) SetXSpeed(xSpeed float32) {
 	if set := g.CurrentSet(); set != nil {
-		set.XSpeed = genericsutil.OrElse[float32](xSpeed, func() bool { return xSpeed > 0 }, xSpeed*-1)
+		set.XSpeed = genericsutil.OrElse[float32](xSpeed, func(v float32) bool { return v > 0 }, func() float32 { return xSpeed * -1 })
 	}
 }
 
